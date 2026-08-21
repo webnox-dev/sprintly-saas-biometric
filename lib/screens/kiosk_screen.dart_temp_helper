@@ -1,0 +1,99 @@
+
+  // Unified Success View for Face & Fingerprint
+  Widget _buildSuccessView() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              width: 180,
+              height: 180,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.green.withOpacity(0.1),
+                border: Border.all(
+                  color: Colors.greenAccent.withOpacity(0.5),
+                  width: 2,
+                ),
+              ),
+            ),
+            Container(
+              width: 140,
+              height: 140,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.green, // Green Icon Background
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.greenAccent,
+                    blurRadius: 30,
+                    spreadRadius: 5,
+                  ),
+                ],
+              ),
+              child: const Center(
+                child: Icon(Icons.check_rounded, size: 80, color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 32),
+        Text(
+          'Verified',
+          style: GoogleFonts.poppins(
+            color: Colors.greenAccent,
+            fontSize: 32,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Employee Details
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white10,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Column(
+            children: [
+              Text(
+                _employeeName,
+                style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _employeeCode,
+                style: GoogleFonts.poppins(
+                  color: Colors.white70,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        // Punch Status
+        Text(
+          _punchType, // "Punch IN" or "Punch OUT"
+          style: GoogleFonts.poppins(
+            color: Colors.white,
+            fontSize: 28,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          _time,
+          style: GoogleFonts.poppins(color: Colors.white54, fontSize: 18),
+        ),
+      ],
+    );
+  }

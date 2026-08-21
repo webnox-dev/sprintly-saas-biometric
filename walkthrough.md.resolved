@@ -1,0 +1,352 @@
+# Face Recognition Attendance Kiosk - Code Documentation
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         UI Layer                            │
+│  ┌─────────────┐  ┌──────────────────┐  ┌───────────────┐   │
+│  │ KioskScreen │  │ EnrollmentScreen │  │ ReportsScreen │   │
+│  └──────┬──────┘  └────────┬─────────┘  └───────┬───────┘   │
+└─────────┼──────────────────┼────────────────────┼───────────┘
+          │                  │                    │
+┌─────────▼──────────────────▼────────────────────▼───────────┐
+│                      Service Layer                          │
+│  ┌──────────────────┐  ┌─────────────────────────────────┐  │
+│  │ AttendanceService│  │ FaceEmbeddingService (TFLite)   │  │
+│  │  (Business Logic)│  │  (Face Recognition)             │  │
+│  └────────┬─────────┘  └─────────────────────────────────┘  │
+└───────────┼─────────────────────────────────────────────────┘
+            │
+┌───────────▼─────────────────────────────────────────────────┐
+│                      Data Layer                             │
+│  ┌──────────────────┐  ┌─────────────────────────────────┐  │
+│  │ DatabaseService  │  │ Models (Employee, Attendance)   │  │
+│  │  (SQLite CRUD)   │  │                                 │  │
+│  └──────────────────┘  └─────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Project Structure
+
+```
+lib/
+├── main.dart                    # App entry point
+├── models/
+│   ├── employee.dart            # Employee data model
+│   └── attendance.dart          # Attendance record model
+├── services/
+│   ├── database_service.dart    # SQLite database operations
+│   ├── face_embedding_service.dart  # TFLite face recognition
+│   ├── face_detection_service.dart  # MLKit face detection (unused)
+│   └── attendance_service.dart  # Business logic orchestration
+└── screens/
+    ├── kiosk_screen.dart        # Main punch screen
+    └── admin/
+        ├── enrollment_screen.dart  # Employee registration
+        └── reports_screen.dart     # Attendance reports
+```
+
+---
+
+## File Documentation
+
+---
+
+### 📄 [lib/main.dart](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/main.dart)
+**Purpose:** Application entry point and configuration
+
+```dart
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Lock to portrait mode for kiosk
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  
+  // Hide status bar for kiosk mode (immersive)
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  
+  runApp(const BiometricApp());
+}
+```
+
+**Key Features:**
+- Portrait orientation lock
+- Immersive kiosk mode (hides status/nav bars)
+- Dark theme configuration
+
+---
+
+### 📄 [lib/models/employee.dart](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/models/employee.dart)
+**Purpose:** Data model for employee information
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `int?` | Auto-generated database ID |
+| [employeeId](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#91-95) | `String` | User-defined ID (e.g., "EMP001") |
+| `name` | `String` | Employee full name |
+| `department` | `String?` | Optional department |
+| `faceEmbedding` | `List<double>` | 192-dim face vector |
+| `createdAt` | `DateTime` | Registration timestamp |
+
+**Methods:**
+- [toMap()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/models/employee.dart#18-28) - Converts to database format (embedding as comma-separated string)
+- `fromMap()` - Creates from database row
+
+---
+
+### 📄 [lib/models/attendance.dart](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/models/attendance.dart)
+**Purpose:** Data model for punch records
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `int?` | Auto-generated ID |
+| [employeeId](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#91-95) | `int` | Reference to employee |
+| `punchType` | `String` | "IN" or "OUT" |
+| `timestamp` | `DateTime` | Punch time |
+| `date` | `String` | Date string (YYYY-MM-DD) |
+
+---
+
+### 📄 [lib/services/database_service.dart](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart)
+**Purpose:** SQLite database operations
+
+**Database Schema:**
+```sql
+-- employees table
+CREATE TABLE employees (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id TEXT NOT NULL UNIQUE,  -- User-defined ID
+  name TEXT NOT NULL,
+  department TEXT,
+  face_embedding TEXT NOT NULL,       -- Comma-separated floats
+  created_at INTEGER
+);
+
+-- attendance table
+CREATE TABLE attendance (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER REFERENCES employees(id),
+  punch_type TEXT CHECK (punch_type IN ('IN', 'OUT')),
+  timestamp INTEGER,
+  date TEXT
+);
+```
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| [insertEmployee()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#58-62) | Add new employee |
+| [getAllEmployees()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#63-68) | Get all registered employees |
+| [getEmployeeByEmployeeId()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#80-90) | Find by user-defined ID |
+| [employeeIdExists()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#91-95) | Check if ID already taken |
+| [insertAttendance()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#102-106) | Record punch |
+| [getLastPunchType()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#107-119) | Get last punch to toggle IN/OUT |
+| [getAttendanceReportByDate()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#131-151) | Get daily report with IN/OUT times |
+
+---
+
+### 📄 [lib/services/face_embedding_service.dart](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/face_embedding_service.dart)
+**Purpose:** TFLite-based face recognition
+
+**Configuration:**
+```dart
+static const int _inputSize = 112;        // Model input: 112x112 pixels
+static const int _embeddingSize = 192;    // Output: 192-dimensional vector
+static const double _matchThreshold = 0.75; // Similarity threshold
+```
+
+**Key Methods:**
+
+| Method | Description |
+|--------|-------------|
+| [initialize()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/face_embedding_service.dart#15-26) | Load MobileFaceNet TFLite model |
+| [getEmbedding(imageBytes)](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/face_embedding_service.dart#27-58) | Generate 192-dim vector from face image |
+| [getAveragedEmbedding(images)](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/face_embedding_service.dart#59-85) | Average vectors from 3 angle photos |
+| [cosineSimilarity(emb1, emb2)](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/face_embedding_service.dart#109-128) | Compare two face vectors (0-1 score) |
+| [findBestMatch(embedding, employees)](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/face_embedding_service.dart#129-170) | Find matching employee above threshold |
+
+**Face Matching Flow:**
+```
+1. Capture photo → Decode image
+2. Resize to 112x112 → Normalize pixels to [-1, 1]
+3. Run TFLite inference → Get 192-dim embedding
+4. Compare with all employees using cosine similarity
+5. Return best match if score > 0.75, else null
+```
+
+---
+
+### 📄 [lib/services/attendance_service.dart](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/attendance_service.dart)
+**Purpose:** Business logic orchestration
+
+**Key Methods:**
+
+| Method | Description |
+|--------|-------------|
+| [enrollEmployee()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/attendance_service.dart#18-44) | Register new employee with 3 face photos |
+| [punchAttendance()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/attendance_service.dart#45-99) | Match face → toggle IN/OUT → record attendance |
+| [employeeIdExists()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#91-95) | Check if employee ID is taken |
+| [getAllEmployees()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/database_service.dart#63-68) | Get employee list |
+| [getReport()](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/services/attendance_service.dart#105-109) | Get attendance report for date |
+
+**Enrollment Flow:**
+```
+1. Check if employee ID exists (reject if duplicate)
+2. Get averaged embedding from 3 face photos
+3. Create Employee record with embedding
+4. Save to SQLite database
+```
+
+**Punch Flow:**
+```
+1. Capture face photo
+2. Generate embedding
+3. Compare with all enrolled employees
+4. If match found:
+   - Check last punch type for today
+   - Toggle to opposite (IN→OUT or OUT→IN)
+   - Record attendance
+5. If no match: Return "Face not recognized"
+```
+
+---
+
+### 📄 [lib/screens/kiosk_screen.dart](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/screens/kiosk_screen.dart)
+**Purpose:** Main punch interface for employees
+
+**States:**
+| State | Display |
+|-------|---------|
+| `idle` | Camera + "Position face" + VERIFY button |
+| `verifying` | Loading spinner |
+| `success` | ✅ Employee ID + Name + Punch IN/OUT + Time |
+| `error` | ❌ Error message |
+
+**Key Features:**
+- Camera preview (front camera)
+- Manual VERIFY button (no auto-detection)
+- Admin menu (long-press ⚙️)
+- Camera reinitialization after navigation
+
+**Admin Menu:**
+- Enroll Employee → Opens enrollment screen
+- View Reports → Opens reports screen
+
+---
+
+### 📄 [lib/screens/admin/enrollment_screen.dart](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/screens/admin/enrollment_screen.dart)
+**Purpose:** Register new employees with face photos
+
+**Input Fields:**
+- Employee ID (required, unique)
+- Name (required)
+- Department (optional)
+
+**3-Angle Capture Flow:**
+1. Capture **Front** photo
+2. Capture **Left** turn photo
+3. Capture **Right** turn photo
+4. Show thumbnails for review
+5. Click **Enroll Employee** to save
+
+**Features:**
+- Progress indicators (1/2/3 circles)
+- Angle instructions ("Look straight", "Turn left", etc.)
+- Retake all photos option
+- Duplicate ID validation
+
+---
+
+### 📄 [lib/screens/admin/reports_screen.dart](file:///Users/webnox/Documents/Flutter_projects/biometric/lib/screens/admin/reports_screen.dart)
+**Purpose:** View daily attendance reports
+
+**Features:**
+- Date picker (select any date)
+- Employee list with:
+  - Employee ID badge
+  - Name and department
+  - First IN time
+  - Last OUT time
+  - Status badge (Full Day / Present / Absent)
+- View all enrolled employees button
+
+---
+
+## Configuration Files
+
+### 📄 [pubspec.yaml](file:///Users/webnox/Documents/Flutter_projects/biometric/pubspec.yaml) (Dependencies)
+
+```yaml
+dependencies:
+  camera: ^0.11.0+2              # Camera access
+  camera_android: ^0.10.9+20     # Legacy Camera2 (fixes CameraX bug)
+  google_mlkit_face_detection    # Face detection (optional)
+  tflite_flutter: ^0.11.0        # TensorFlow Lite
+  image: ^4.2.0                  # Image processing
+  sqflite: ^2.3.0                # SQLite database
+  path_provider: ^2.1.4          # File paths
+  intl: ^0.19.0                  # Date formatting
+```
+
+### 📄 [android/app/build.gradle.kts](file:///Users/webnox/Documents/Flutter_projects/biometric/android/app/build.gradle.kts)
+
+```kotlin
+android {
+    compileSdk = 36                    // Required by camera_android
+    ndkVersion = "27.0.12077973"       // Required by plugins
+    
+    defaultConfig {
+        minSdk = 23                    // Android 6.0+
+    }
+}
+```
+
+### 📄 [AndroidManifest.xml](file:///Users/webnox/Documents/Flutter_projects/biometric/android/app/src/main/AndroidManifest.xml) (Permissions)
+
+```xml
+<uses-permission android:name="android.permission.CAMERA"/>
+<uses-feature android:name="android.hardware.camera" android:required="true"/>
+
+<!-- Force Camera2 implementation -->
+<meta-data
+    android:name="io.flutter.plugins.camera.useAndroidX"
+    android:value="false" />
+```
+
+---
+
+## Assets
+
+### 📁 [assets/models/mobilefacenet.tflite](file:///Users/webnox/Documents/Flutter_projects/biometric/assets/models/mobilefacenet.tflite)
+- **Size:** ~5MB
+- **Input:** 112×112×3 RGB image (normalized to [-1, 1])
+- **Output:** 192-dimensional face embedding vector
+- **Accuracy:** ~99.4% on LFW dataset
+
+---
+
+## Testing Guide
+
+1. **Enroll Employee:**
+   - Long-press ⚙️ → Enroll Employee
+   - Enter ID: `EMP001`, Name: `Test User`
+   - Capture 3 angles → Enroll
+
+2. **Verify (Same Person):**
+   - Position face → Click VERIFY
+   - Should show: `EMP001` + `Test User` + `Punch IN`
+
+3. **Verify (Different Person):**
+   - Have someone else try VERIFY
+   - Should show: `Face not recognized`
+
+4. **Toggle Punch:**
+   - Verify same person again
+   - Should toggle to `Punch OUT`
+
+5. **View Reports:**
+   - Long-press ⚙️ → View Reports
+   - See IN/OUT times for today
