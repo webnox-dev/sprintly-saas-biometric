@@ -1,0 +1,197 @@
+name: Build Biometric Kiosk Release (Android APK & Linux)
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a GitHub Release?'
+        required: true
+        type: boolean
+        default: true
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  # ─── 1. Build Android APKs ───────────────────────────────────────────────
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.6'
+          channel: 'stable'
+          cache: true
+
+      - name: Extract version info
+        id: version_info
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //;s/+.*//' | tr -d '[:space:]')
+          BUILD=$(grep '^version:' pubspec.yaml | sed 's/version: .*+//' | tr -d '[:space:]')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build=$BUILD" >> $GITHUB_OUTPUT
+          echo "Building version $VERSION (build $BUILD)"
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Universal Release APK
+        run: flutter build apk --release
+
+      - name: Build Split-per-ABI APKs
+        run: flutter build apk --split-per-abi --release
+
+      - name: Collect APKs
+        run: |
+          mkdir -p dist
+          VERSION="${{ steps.version_info.outputs.version }}"
+          BUILD="${{ steps.version_info.outputs.build }}"
+
+          # Universal FAT APK
+          if [ -f "build/app/outputs/flutter-apk/app-release.apk" ]; then
+            cp "build/app/outputs/flutter-apk/app-release.apk" "dist/Sprintly-Biometric-Kiosk-v${VERSION}+${BUILD}.apk"
+            cp "build/app/outputs/flutter-apk/app-release.apk" "dist/Sprintly-Biometric-Kiosk-latest.apk"
+          fi
+
+          # Architecture-specific APKs
+          if [ -f "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk" ]; then
+            cp "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk" "dist/Sprintly-Biometric-arm64-v8a-v${VERSION}.apk"
+          fi
+          if [ -f "build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk" ]; then
+            cp "build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk" "dist/Sprintly-Biometric-armeabi-v7a-v${VERSION}.apk"
+          fi
+          if [ -f "build/app/outputs/flutter-apk/app-x86_64-release.apk" ]; then
+            cp "build/app/outputs/flutter-apk/app-x86_64-release.apk" "dist/Sprintly-Biometric-x86_64-v${VERSION}.apk"
+          fi
+
+          ls -lh dist/
+
+      - name: Upload Android Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sprintly-Biometric-Android-APKs
+          path: dist/*.apk
+
+  # ─── 2. Build Linux Bundle (Optional) ────────────────────────────────────
+  build-linux:
+    name: Build Linux Kiosk
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Build Dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev \
+            libsecret-1-dev libjsoncpp-dev \
+            libsqlite3-dev libnotify-dev \
+            libayatana-appindicator3-dev || \
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev \
+            libsecret-1-dev libjsoncpp-dev \
+            libsqlite3-dev libnotify-dev \
+            libappindicator3-dev
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.6'
+          channel: 'stable'
+          cache: true
+
+      - name: Enable Linux desktop
+        run: flutter config --enable-linux-desktop
+
+      - name: Extract version info
+        id: version_info
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //;s/+.*//' | tr -d '[:space:]')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Build Linux Release
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+          CFLAGS: "-Wno-error -Wno-unused-variable"
+          CXXFLAGS: "-Wno-error -Wno-unused-variable"
+        run: flutter build linux --release
+
+      - name: Package Linux tar.gz
+        run: |
+          mkdir -p dist
+          VERSION="${{ steps.version_info.outputs.version }}"
+          tar -czvf "dist/Sprintly-Biometric-Linux-x64-v${VERSION}.tar.gz" -C build/linux/x64/release/bundle .
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sprintly-Biometric-Linux
+          path: dist/*.tar.gz
+
+  # ─── 3. Create GitHub Release ────────────────────────────────────────────
+  create-release:
+    name: Create GitHub Release
+    needs: [build-apk, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Extract tag name
+        id: tag_info
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //;s/+.*//' | tr -d '[:space:]')
+            TAG="v${VERSION}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_info.outputs.tag }}
+          name: "Sprintly Biometric Kiosk ${{ steps.tag_info.outputs.tag }}"
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release-assets/*.apk
+            release-assets/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
