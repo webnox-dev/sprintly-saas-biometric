@@ -121,7 +121,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag_info.outputs.tag }}
+          repository: webnox-dev/rathz-releases
+          tag_name: "kiosk-${{ steps.tag_info.outputs.tag }}"
           name: "Sprintly Biometric Kiosk ${{ steps.tag_info.outputs.tag }}"
           draft: false
           prerelease: false
@@ -129,4 +130,6 @@ jobs:
           files: |
             release-assets/*.apk
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASES_PAT || secrets.GITHUB_TOKEN }}
+
+
