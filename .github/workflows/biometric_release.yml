@@ -8,11 +8,13 @@ on:
         required: true
         type: boolean
         default: true
-  push:
-    branches:
-      - main
-    tags:
-      - 'v*'
+  # NOTE: Automated push triggers commented out to prevent burning GitHub Actions minutes.
+  # Uncomment below when you want to enable automatic builds on push / release tags.
+  # push:
+  #   branches:
+  #     - main
+  #   tags:
+  #     - 'v*'
 
 jobs:
   # ─── 1. Build Android APKs ───────────────────────────────────────────────
